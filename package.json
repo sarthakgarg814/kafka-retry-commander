@@ -1,0 +1,55 @@
+{
+    "name": "kafka-retry-commander",
+    "version": "0.1.0",
+    "description": "A powerful and flexible Kafka message retry system for Node.js applications with automatic retries, DLQ, and customizable hooks",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "test": "jest",
+        "lint": "eslint . --ext .ts",
+        "format": "prettier --write \"src/**/*.ts\"",
+        "prepare": "npm run build",
+        "docs": "typedoc --out docs src"
+    },
+    "keywords": [
+        "kafka",
+        "retry",
+        "backoff",
+        "dlq",
+        "message-processing",
+        "typescript"
+    ],
+    "author": "",
+    "license": "MIT",
+    "dependencies": {
+        "ioredis": "^5.3.2",
+        "kafkajs": "^2.2.4",
+        "winston": "^3.11.0",
+        "zod": "^3.22.4"
+    },
+    "devDependencies": {
+        "@types/jest": "^29.5.12",
+        "@types/node": "^20.11.19",
+        "@types/winston": "^2.4.4",
+        "@typescript-eslint/eslint-plugin": "^7.0.1",
+        "@typescript-eslint/parser": "^7.0.1",
+        "eslint": "^8.56.0",
+        "jest": "^29.7.0",
+        "prettier": "^3.2.5",
+        "ts-jest": "^29.1.2",
+        "typedoc": "^0.25.12",
+        "typescript": "^5.3.3"
+    },
+    "engines": {
+        "node": ">=16.0.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sarthakgarg814/kafka-retry-commander.git"
+    },
+    "bugs": {
+        "url": "https://github.com/sarthakgarg814/kafka-retry-commander/issues"
+    },
+    "homepage": "https://github.com/sarthakgarg814/kafka-retry-commander#readme"
+}
