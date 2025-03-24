@@ -75,18 +75,26 @@ export class KafkaRetryCommander {
       await this.producer.connect();
       await this.consumer.connect();
       
-      // Subscribe to both main topics and DLQ topics
-      const topics = [...this.context.config.topics];
+      // Create topics including retry and DLQ topics
       for (const topic of this.context.config.topics) {
-        const dlqTopic = this.topicManager.getDLQTopic(topic, this.context.config.retryConfig);
-        topics.push(dlqTopic);
+        await this.topicManager.createTopics(topic, this.context.config.retryConfig);
       }
 
-      for (const topic of topics) {
+      // Subscribe to main topics
+      const allTopics = this.context.config.topics.flatMap(topic => [
+        topic,
+        ...Array.from(
+          { length: this.context.config.retryConfig.maxRetries }, 
+          (_, i) => this.topicManager.getRetryTopic(topic, i + 1, this.context.config.retryConfig)
+        ),
+        this.topicManager.getDLQTopic(topic, this.context.config.retryConfig)
+      ]);
+
+      for (const topic of allTopics) {
         await this.consumer.subscribe({ topic, fromBeginning: false });
       }
 
-      this.logger.info('Successfully connected to Kafka');
+      this.logger.info('Successfully connected to Kafka', { topics: allTopics });
     } catch (error) {
       this.logger.error('Failed to connect to Kafka', { error });
       throw error;
@@ -218,54 +226,136 @@ export class KafkaRetryCommander {
     const { topic, partition, message } = payload;
     const value = message.value ? JSON.parse(message.value.toString()) : null;
 
-    await this.validateMessage(value, this.context.config.retryConfig.schema);
-
-    const retryMessage: RetryMessage = {
-      key: message.key?.toString() || '',
-      value,
-      headers: message.headers as Record<string, string>,
-      metadata: {
-        retryCount: 0,
-        lastRetryTimestamp: Date.now(),
-        nextRetryTimestamp: 0,
-        originalTopic: topic,
-        originalPartition: partition,
-        originalOffset: message.offset
-      }
-    };
-
-    // Filter hooks that have beforeRetry
-    const beforeRetryHooks = this.context.hooks?.filter(hook => hook.beforeRetry) || [];
-    const afterRetryHooks = this.context.hooks?.filter(hook => hook.afterRetry) || [];
-
     try {
-      // Call beforeRetry hooks
-      for (const hook of beforeRetryHooks) {
-        await hook.beforeRetry!(retryMessage);
+      await this.validateMessage(value, this.context.config.retryConfig.schema);
+
+      const retryCount = parseInt(message.headers?.['x-retry-count']?.toString() || '0');
+      const nextRetryTimestamp = parseInt(message.headers?.['x-next-retry-timestamp']?.toString() || '0');
+
+      // Check if it's a retry message and not yet ready to process
+      if (retryCount > 0 && nextRetryTimestamp > Date.now()) {
+        // Pause the partition until the message is ready
+        await this.consumer.pause([{ topic, partitions: [partition] }]);
+        
+        // Schedule resume after delay
+        setTimeout(async () => {
+          await this.consumer.resume([{ topic, partitions: [partition] }]);
+        }, nextRetryTimestamp - Date.now());
+        
+        return;
       }
 
-      // Process message using user's handler
-      if (this.messageHandler) {
-        await this.messageHandler(value);
-      } else {
-        this.logger.warn('No message handler set, skipping message processing');
-      }
+      const retryMessage: RetryMessage = {
+        key: message.key?.toString() || '',
+        value,
+        headers: message.headers as Record<string, string>,
+        metadata: {
+          retryCount,
+          lastRetryTimestamp: Date.now(),
+          nextRetryTimestamp,
+          originalTopic: message.headers?.['x-original-topic']?.toString() || topic,
+          originalPartition: partition,
+          originalOffset: message.offset
+        }
+      };
 
-      // Call afterRetry hooks with success
-      for (const hook of afterRetryHooks) {
-        await hook.afterRetry!(retryMessage, true);
+      // Process hooks and message
+      const beforeRetryHooks = this.context.hooks?.filter(hook => hook.beforeRetry) || [];
+      const afterRetryHooks = this.context.hooks?.filter(hook => hook.afterRetry) || [];
+
+      try {
+        // Call beforeRetry hooks
+        for (const hook of beforeRetryHooks) {
+          await hook.beforeRetry!(retryMessage);
+        }
+
+        // Process message using user's handler
+        if (this.messageHandler) {
+          await this.messageHandler(value);
+        }
+
+        // Call afterRetry hooks with success
+        for (const hook of afterRetryHooks) {
+          await hook.afterRetry!(retryMessage, true);
+        }
+      } catch (error) {
+        // Handle retry logic
+        const maxRetries = this.context.config.retryConfig.maxRetries || 3;
+        const retryDelay = this.context.config.retryConfig.initialDelay || 1000;
+
+        // Call afterRetry hooks with failure
+        for (const hook of afterRetryHooks) {
+          await hook.afterRetry!(retryMessage, false);
+        }
+
+        if (retryCount >= maxRetries) {
+          // Send to DLQ
+          const dlqTopic = this.topicManager.getDLQTopic(
+            retryMessage.metadata.originalTopic, 
+            this.context.config.retryConfig
+          );
+          
+          await this.producer.send({
+            topic: dlqTopic,
+            messages: [{
+              key: message.key,
+              value: message.value,
+              headers: {
+                ...message.headers,
+                'x-retry-count': retryCount.toString(),
+                'x-error-message': (error as Error).message,
+                'x-error-stack': (error as Error).stack,
+                'x-original-topic': retryMessage.metadata.originalTopic,
+                'x-failed-at': new Date().toISOString()
+              }
+            }]
+          });
+        } else {
+          // Send to next retry topic
+          const nextRetryLevel = retryCount + 1;
+          const nextRetry = Date.now() + (retryDelay * Math.pow(this.context.config.retryConfig.backoffFactor, retryCount));
+          
+          const retryTopic = this.topicManager.getRetryTopic(
+            retryMessage.metadata.originalTopic,
+            nextRetryLevel,
+            this.context.config.retryConfig
+          );
+          
+          await this.producer.send({
+            topic: retryTopic,
+            messages: [{
+              key: message.key,
+              value: message.value,
+              headers: {
+                ...message.headers,
+                'x-retry-count': nextRetryLevel.toString(),
+                'x-next-retry-timestamp': nextRetry.toString(),
+                'x-error-message': (error as Error).message,
+                'x-original-topic': retryMessage.metadata.originalTopic,
+                'x-last-retry': new Date().toISOString()
+              }
+            }]
+          });
+        }
+
+        // Update metrics if configured
+        if (this.context.metrics) {
+          this.context.metrics.incrementRetryCount(topic);
+        }
+
+        throw error; // Re-throw for error handling
       }
     } catch (error) {
-      // Call afterRetry hooks with failure
-      for (const hook of afterRetryHooks) {
-        await hook.afterRetry!(retryMessage, false);
-      }
-      throw error; // Re-throw to trigger retry mechanism
-    }
+      this.logger.error('Failed to process message', {
+        error,
+        topic,
+        partition,
+        offset: message.offset
+      });
 
-    // Update metrics if configured
-    if (this.context.metrics) {
-      this.context.metrics.recordProcessingTime(topic, Date.now());
+      if (this.context.config.errorHandler) {
+        await this.context.config.errorHandler(error as Error, payload);
+      }
     }
   }
 
