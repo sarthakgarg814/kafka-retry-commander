@@ -10,41 +10,46 @@ const config = {
     initialDelay: 1000,
     backoffFactor: 2,
     groupId: 'retry-hooks-group',
-    topics: ['orders']
-  }
+    topics: {
+      dlq: 'orders.dlq',
+      retry: (retryCount: number) => `orders.retry-${retryCount}`,
+    },
+  },
 };
 
-async function main() {
+async function main(): Promise<void> {
   const commander = new KafkaRetryCommander(config);
 
-  // Add processing hooks
   commander.addHook({
-    beforeRetry: async (message) => {
-      console.log('Before retry:', {
+    beforeRetry: async (message: RetryMessage): Promise<void> => {
+      console.warn('Before retry:', {
         originalTopic: message.metadata.originalTopic,
         originalPartition: message.metadata.originalPartition,
         retryCount: message.metadata.retryCount,
         lastRetryTimestamp: message.metadata.lastRetryTimestamp,
-        nextRetryTimestamp: message.metadata.nextRetryTimestamp
+        nextRetryTimestamp: message.metadata.nextRetryTimestamp,
       });
     },
-    afterRetry: async (message: RetryMessage) => {
-      console.log('After retry:', {
+    afterRetry: async (message: RetryMessage): Promise<void> => {
+      console.warn('After retry:', {
         originalTopic: message.metadata.originalTopic,
         originalPartition: message.metadata.originalPartition,
         retryCount: message.metadata.retryCount,
         lastRetryTimestamp: message.metadata.lastRetryTimestamp,
-        nextRetryTimestamp: message.metadata.nextRetryTimestamp
+        nextRetryTimestamp: message.metadata.nextRetryTimestamp,
       });
-    }
+    },
   });
 
-  commander.setMessageHandler(async (message) => {
-    console.log('Processing message:', message);
+  commander.setMessageHandler(async (message): Promise<void> => {
+    console.warn('Processing message:', message);
   });
 
   await commander.connect();
   await commander.start();
 }
 
-main().catch(console.error); 
+void main().catch(error => {
+  console.error('Error:', error);
+  process.exit(1);
+}); 

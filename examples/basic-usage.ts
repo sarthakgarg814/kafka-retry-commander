@@ -10,30 +10,31 @@ const config = {
     initialDelay: 1000,
     backoffFactor: 2,
     groupId: 'retry-group',
-    topics: ['orders']
-  }
+    topics: {
+      dlq: 'orders.dlq',
+      retry: (retryCount: number) => `orders.retry-${retryCount}`,
+    },
+  },
 };
 
-async function main() {
+async function main(): Promise<void> {
   const commander = new KafkaRetryCommander(config);
 
-  // Handle regular messages
-  commander.setMessageHandler(async (message) => {
-    console.log('Processing message:', message);
+  commander.setMessageHandler(async (message): Promise<void> => {
+    console.warn('Processing message:', message);
     if (!message.orderId) {
       throw new Error('Invalid order message');
     }
   });
 
-  // Handle DLQ messages
-  commander.setDLQHandler(async (message:) => {
-    console.log('DLQ message:', {
+  commander.setDLQHandler(async (message: RetryMessage): Promise<void> => {
+    console.warn('DLQ message:', {
       originalTopic: message.metadata.originalTopic,
       originalPartition: message.metadata.originalPartition,
       originalOffset: message.metadata.originalOffset,
       error: message.headers?.['x-error-message'],
       retryCount: message.metadata.retryCount,
-      lastRetryTimestamp: message.metadata.lastRetryTimestamp
+      lastRetryTimestamp: message.metadata.lastRetryTimestamp,
     });
   });
 
@@ -41,4 +42,7 @@ async function main() {
   await commander.start();
 }
 
-main().catch(console.error); 
+void main().catch(error => {
+  console.error('Error:', error);
+  process.exit(1);
+}); 

@@ -1,4 +1,4 @@
-import { Kafka, Consumer, Producer, Admin, EachMessagePayload, EachBatchPayload } from 'kafkajs';
+import { Kafka, Consumer, Producer, Admin, EachMessagePayload } from 'kafkajs';
 import { createLogger, Logger, format, transports } from 'winston';
 import {
   RetryContext,
@@ -22,7 +22,7 @@ export class KafkaRetryCommander {
   private hooks: RetryHook[] = [];
   private metrics?: RetryMetrics;
   private dlqHandler?: (message: RetryMessage) => Promise<void>;
-  private messageHandler?: (message: any) => Promise<void>;
+  private messageHandler?: (message: RetryMessage) => Promise<void>;
 
   constructor(config: KafkaRetryCommanderConfig) {
     const kafkaConfig = {
@@ -210,7 +210,7 @@ export class KafkaRetryCommander {
       throw error;
     }
   }
-
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async validateMessage(message: any, schema: RetryConfig['schema']): Promise<void> {
     if (!schema) return;
 
@@ -389,7 +389,7 @@ export class KafkaRetryCommander {
     this.metrics = metrics;
   }
 
-  public setMessageHandler(handler: (message: any) => Promise<void>): void {
+  public setMessageHandler(handler: (message: RetryMessage) => Promise<void>): void {
     this.messageHandler = handler;
   }
 } 

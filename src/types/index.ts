@@ -1,4 +1,4 @@
-import { Kafka, Consumer, Producer, KafkaConfig, ConsumerConfig, ProducerConfig, SASLOptions, RetryOptions } from 'kafkajs';
+import { Kafka, Consumer, Producer, ConsumerConfig, ProducerConfig, SASLOptions, RetryOptions } from 'kafkajs';
 import { z } from 'zod';
 import { Logger } from 'winston';
 
@@ -19,6 +19,7 @@ export interface RetryConfig {
   };
   schema?: {
     type: 'avro' | 'json';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     schema: z.ZodType<any>;
   };
   logging?: {
@@ -54,6 +55,7 @@ export interface KafkaRetryCommanderConfig extends ConsumerConfig {
   groupId: string;
   topics: string[];
   retryConfig: RetryConfig;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   errorHandler?: (error: Error, message: any) => Promise<void>;
   ssl?: boolean | { rejectUnauthorized?: boolean };
   sasl?: SASLOptions;
@@ -68,6 +70,7 @@ export interface KafkaRetryProducerConfig extends ProducerConfig {
 
 export interface RetryMessage {
   key: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   value: any;
   headers?: Record<string, string>;
   metadata: RetryMetadata;
