@@ -7,7 +7,7 @@
     "scripts": {
         "build": "tsc",
         "test": "jest",
-        "lint": "eslint . --ext .ts",
+        "lint": "eslint 'src/**/*.{ts,tsx}'",
         "lint:fix": "eslint 'src/**/*.{ts,tsx}' --fix",
         "format": "prettier --write \"src/**/*.ts\" \"examples/**/*.ts\"",
         "prepare": "npm run build",
